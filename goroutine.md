@@ -49,18 +49,173 @@ runtime.GOMAXPROCS(num)    //设置可同时执行的最大CPU数
 ```   
   ### goroutine异常捕捉
 当启动多个goroutine时，如果其中一个goroutine异常了，并且我们并没有对进行异常处理，那么整个程序都会终止，所以我们在编写程序时候最好每个goroutine所运行的函数都做异常处理，异常处理采用recover
+```
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func addele(a []int ,i int)  {
+    defer func() {    //匿名函数捕获错误
+        err := recover()
+        if err != nil {
+            fmt.Println("add ele fail")
+        }
+    }()
+   a[i]=i
+   fmt.Println(a)
+}
+
+func main() {
+    Arry := make([]int,4)
+    for i :=0 ; i<10 ;i++{
+        go addele(Arry,i)
+    }
+    time.Sleep(time.Second * 2)
+}
+//结果
+add ele fail
+[0 0 0 0]
+[0 1 0 0]
+[0 1 2 0]
+[0 1 2 3]
+add ele fail
+add ele fail
+add ele fail
+add ele fail
+add ele fail
+```
   ### 同步的goroutine 
 由于goroutine是异步执行的，那很有可能出现主程序退出时还有goroutine没有执行完，此时goroutine也会跟着退出。此时如果想等到所有goroutine任务执行完毕才退出，go提供了sync包和channel来解决同步问题，当然如果你能预测每个goroutine执行的时间，你还可以通过time.Sleep方式等待所有的groutine执行完成以后在退出程序(如上面的列子)。
 
 示例一：使用sync包同步goroutine
 sync大致实现方式
 WaitGroup 等待一组goroutinue执行完毕. 主程序调用 Add 添加等待的goroutinue数量. 每个goroutinue在执行结束时调用 Done ，此时等待队列数量减1.，主程序通过Wait阻塞，直到等待队列为0.
+```
+package main
 
+import (
+    "fmt"
+    "sync"
+)
+
+func cal(a int , b int ,n *sync.WaitGroup)  {
+    c := a+b
+    fmt.Printf("%d + %d = %d\n",a,b,c)
+    defer n.Done() //goroutinue完成后, WaitGroup的计数-1
+
+}
+
+func main() {
+    var go_sync sync.WaitGroup //声明一个WaitGroup变量
+    for i :=0 ; i<10 ;i++{
+        go_sync.Add(1) // WaitGroup的计数加1
+        go cal(i,i+1,&go_sync)  
+    }
+    go_sync.Wait()  //等待所有goroutine执行完毕
+}
+//结果
+9 + 10 = 19
+2 + 3 = 5
+3 + 4 = 7
+4 + 5 = 9
+5 + 6 = 11
+1 + 2 = 3
+6 + 7 = 13
+7 + 8 = 15
+0 + 1 = 1
+8 + 9 = 17
+```
 示例二：通过channel实现goroutine之间的同步。
 
 实现方式：通过channel能在多个groutine之间通讯，当一个goroutine完成时候向channel发送退出信号,等所有goroutine退出时候，利用for循环channe去channel中的信号，若取不到数据会阻塞原理，等待所有goroutine执行完毕，使用该方法有个前提是你已经知道了你启动了多少个goroutine。
+```
+package main
+
+import (
+    "fmt"
+    "time"
+)
+
+func cal(a int , b int ,Exitchan chan bool)  {
+    c := a+b
+    fmt.Printf("%d + %d = %d\n",a,b,c)
+    time.Sleep(time.Second*2)
+    Exitchan <- true
+}
+
+func main() {
+
+    Exitchan := make(chan bool,10)  //声明并分配管道内存
+    for i :=0 ; i<10 ;i++{
+        go cal(i,i+1,Exitchan)
+    }
+    for j :=0; j<10; j++{   
+         <- Exitchan  //取信号数据，如果取不到则会阻塞
+    }
+    close(Exitchan) // 关闭管道
+}
+```
   ### goroutine之间的通讯
 goroutine本质上是协程，可以理解为不受内核调度，而受go调度器管理的线程。goroutine之间可以通过channel进行通信或者说是数据共享，当然你也可以使用全局变量来进行数据共享。
+示例：使用channel模拟消费者和生产者模式
+```
+package main
+
+import (
+    "fmt"
+    "sync"
+)
+
+func Productor(mychan chan int,data int,wait *sync.WaitGroup)  {
+    mychan <- data
+    fmt.Println("product data：",data)
+    wait.Done()
+}
+func Consumer(mychan chan int,wait *sync.WaitGroup)  {
+     a := <- mychan
+    fmt.Println("consumer data：",a)
+     wait.Done()
+}
+func main() {
+
+    datachan := make(chan int, 100)   //通讯数据管道
+    var wg sync.WaitGroup
+
+    for i := 0; i < 10; i++ {
+        go Productor(datachan, i,&wg) //生产数据
+        wg.Add(1)
+    }
+    for j := 0; j < 10; j++ {
+        go Consumer(datachan,&wg)  //消费数据
+        wg.Add(1)
+    }
+    wg.Wait()
+}
+//结果
+consumer data： 4
+product data： 5
+product data： 6
+product data： 7
+product data： 8
+product data： 9
+consumer data： 1
+consumer data： 5
+consumer data： 6
+consumer data： 7
+consumer data： 8
+consumer data： 9
+product data： 2
+consumer data： 2
+product data： 3
+consumer data： 3
+product data： 4
+consumer data： 0
+product data： 0
+product data： 1
+```
 ## 四、channel
   ### 简介  
 channel俗称管道，用于数据传递或数据共享，其本质是一个先进先出的队列，使用goroutine+channel进行数据通讯简单高效，同时也线程安全，多个goroutine可同时修改一个channel，不需要加锁。
@@ -72,6 +227,20 @@ channel可分为三种类型：
 只写channel：只能写数据，不可读
 
 一般channel：可读可写
+ ### channel使用
+定义和声明
+```
+var readOnlyChan <-chan int            // 只读chan
+var writeOnlyChan chan<- int           // 只写chan
+var mychan  chan int                     //读写channel
+//定义完成以后需要make来分配内存空间，不然使用会deadlock
+mychannel = make(chan int,10)
+
+//或者
+read_only := make (<-chan int,10)//定义只读的channel
+write_only := make (chan<- int,10)//定义只写的channel
+read_write := make (chan int,10)//可同时读写
+```
 
  ###读写数据
 
